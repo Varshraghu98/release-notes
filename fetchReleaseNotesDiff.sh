@@ -5,7 +5,7 @@ set -euo pipefail
 VERSION="${1:-latest}"
 
 # Source URL (override by exporting SRC_URL=... if you ever want to change it)
-SRC_URL="${SRC_URL:-https://nginx.org/en/docs/njs/changes.html}"
+SRC_URL="${SRC_URL:-https://nginx.org/en/CHANGES}"
 
 # Base folder of your release-notes repo (this script lives inside it)
 NOTES_DIR="$(cd "$(dirname "$0")" && pwd)"
