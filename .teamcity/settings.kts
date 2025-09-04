@@ -155,57 +155,48 @@ object BumpSubmoduleInParent : BuildType({
             name = "advance release-notes/ to NOTES_SHA + push (SSH)"
             workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
-               #!/usr/bin/env bash
-               set -Eeuo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-               # Always operate inside the checkout dir TeamCity prepared
-               cd "${'$'}{TEAMCITY_BUILD_CHECKOUTDIR}"
+echo "PWD=${'$'}(pwd)"
+git rev-parse --is-inside-work-tree || { echo "Not inside a git work tree"; exit 1; }
 
-               echo "PWD=${'$'}(pwd)"
-               git rev-parse --is-inside-work-tree || { echo "Not inside a git work tree"; exit 1; }
+# Read SHA from the artifact subfolder
+if [[ ! -f .dep/update-notes/notes-sha.txt ]]; then
+  echo "notes-sha.txt not found in .dep/update-notes/"; ls -la .dep/update-notes || true; exit 1
+fi
+NOTES_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
+echo "Using NOTES_SHA=${'$'}{NOTES_SHA}"
 
-               # Read SHA from the artifact subfolder
-               if [[ ! -f .dep/update-notes/notes-sha.txt ]]; then
-                 echo "notes-sha.txt not found from A in .dep/update-notes/"; exit 1
-               fi
-               NOTES_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
-               echo "Using NOTES_SHA=${'$'}{NOTES_SHA}"
+mkdir -p ~/.ssh
+ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-               # Trust GitHub host
-               mkdir -p ~/.ssh
-               ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+git fetch origin main
+git checkout main
+git pull --rebase origin main
+git submodule update --init --recursive
 
-               # Sync parent repo (this is your reproducable-mvn-build checkout)
-               git fetch origin main
-               git checkout main
-               git pull --rebase origin main
+pushd release-notes >/dev/null
+  git fetch --prune origin
+  git checkout "${'$'}{NOTES_SHA}"
+popd >/dev/null
 
-               # Ensure submodule initialized
-               git submodule update --init --recursive
+git add release-notes
+if git diff --cached --quiet; then
+  echo "Submodule already at desired SHA."
+else
+  git config --local user.name  "${'$'}GIT_USER_NAME"
+  git config --local user.email "${'$'}GIT_USER_EMAIL"
+  SHORT="${'$'}(cd release-notes && git rev-parse --short HEAD)"
+  git commit -m "chore(release-notes): bump submodule to ${'$'}SHORT"
+fi
 
-               # Move the submodule to the exact SHA from A
-               pushd release-notes >/dev/null
-                 git fetch --prune origin
-                 git checkout "${'$'}{NOTES_SHA}"
-               popd >/dev/null
+if ! git diff --quiet origin/main..HEAD; then
+  git push origin HEAD:main
+else
+  echo "Nothing to push."
+fi
 
-               # Commit only if pointer changed
-               git add release-notes
-               if git diff --cached --quiet; then
-                 echo "Submodule already at desired SHA."
-               else
-                 git config --local user.name  "${'$'}GIT_USER_NAME"
-                 git config --local user.email "${'$'}GIT_USER_EMAIL"
-                 SHORT="${'$'}(cd release-notes && git rev-parse --short HEAD)"
-                 git commit -m "chore(release-notes): bump submodule to ${'$'}SHORT"
-               fi
-
-               # Push via SSH Agent (TeamCity provides key)
-               if ! git diff --quiet origin/main..HEAD; then
-                 git push origin HEAD:main
-               else
-                 echo "Nothing to push."
-               fi
 """.trimIndent()
         }
     }
