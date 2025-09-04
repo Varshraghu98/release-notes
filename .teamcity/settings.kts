@@ -56,41 +56,51 @@ object UpdateReleaseNotes : BuildType({
         script {
             name = "fetch + commit + push"
             scriptContent = """
-                set -euo pipefail
+        /usr/bin/env bash <<'BASH'
+        set -Eeuo pipefail
 
-                git fetch origin main
-                git checkout main
-                git pull --rebase origin main
+        # Ensure main is current
+        git fetch origin main
+        git checkout main
+        git pull --rebase origin main
 
-                git config --local user.name  "${'$'}{env.GIT_USER_NAME}"
-                git config --local user.email "${'$'}{env.GIT_USER_EMAIL}"
+        # Identity (repo-local)
+        git config --local user.name  "${'$'}{env.GIT_USER_NAME}"
+        git config --local user.email "${'$'}{env.GIT_USER_EMAIL}"
 
-                chmod +x ./fetchReleaseNotes.sh
-                ./fetchReleaseNotes.sh
+        # Run your script (must be executable and have #!/usr/bin/env bash)
+        chmod +x ./fetchReleaseNotes.sh
+        ./fetchReleaseNotes.sh
 
-                git add latest
-                if git diff --cached --quiet; then
-                  echo "No changes to commit."
-                else
-                  git commit -m "docs(notes): refresh latest release notes"
-                fi
+        # Commit only if there are changes under latest/
+        git add latest
+        if git diff --cached --quiet; then
+          echo "No changes to commit."
+        else
+          git commit -m "docs(notes): refresh latest release notes"
+        fi
 
-                ORIGIN_URL="$(git remote get-url origin)"
-                if [[ "${'$'}ORIGIN_URL" =~ ^https:// ]]; then
-                  git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_NOTES}@${'$'}{ORIGIN_URL#https://}"
-                else
-                  git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_NOTES}@github.com/${'$'}{ORIGIN_URL#git@github.com:}"
-                fi
+        # Prepare remote with PAT for push
+        ORIGIN_URL="$(git remote get-url origin)"
+        if [[ "${'$'}ORIGIN_URL" =~ ^https:// ]]; then
+          git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_NOTES}@${'$'}{ORIGIN_URL#https://}"
+        else
+          git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_NOTES}@github.com/${'$'}{ORIGIN_URL#git@github.com:}"
+        fi
 
-                if ! git diff --quiet origin/main..HEAD; then
-                  git push origin HEAD:main
-                else
-                  echo "Nothing to push."
-                fi
+        # Push only if new commit exists
+        if ! git diff --quiet origin/main..HEAD; then
+          git push origin HEAD:main
+        else
+          echo "Nothing to push."
+        fi
 
-                NOTES_SHA="$(git rev-parse HEAD)"
-                echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
-            """.trimIndent()
+        # Export resulting SHA for job B
+        NOTES_SHA="$(git rev-parse HEAD)"
+        echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
+        echo "Notes SHA: ${'$'}NOTES_SHA"
+        BASH
+    """.trimIndent()
         }
     }
 })
