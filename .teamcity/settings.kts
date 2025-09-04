@@ -146,49 +146,52 @@ object BumpSubmoduleInParent : BuildType({
 
     steps {
         script {
-            name = "advance notes/ to NOTES_SHA + push (SSH)"
+            name = "advance release-notes/ to NOTES_SHA + push (SSH)"
             scriptContent = """
-                /usr/bin/env bash <<'BASH'
-                set -Eeuo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-                # Ensure we got the SHA from A
-                test -n "${'$'}NOTES_SHA" || { echo "NOTES_SHA not provided from A"; exit 1; }
+# Make sure we actually got NOTES_SHA from A
+if [[ -z "${'$'}{NOTES_SHA:-}" ]]; then
+  echo "NOTES_SHA not provided from UpdateReleaseNotes"; exit 1
+fi
 
-                mkdir -p ~/.ssh
-                ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+# Trust GitHub host
+mkdir -p ~/.ssh
+ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-                git fetch origin main
-                git checkout main
-                git pull --rebase origin main
+# Sync parent repo
+git fetch origin main
+git checkout main
+git pull --rebase origin main
 
-                # Initialize/refresh submodule
-                git submodule update --init --recursive
+# Ensure submodule initialized
+git submodule update --init --recursive
 
-                # Move the submodule to the exact SHA produced by A
-                pushd notes >/dev/null
-                  git fetch --prune origin
-                  git checkout "${'$'}NOTES_SHA"
-                popd >/dev/null
+# Move the submodule to the exact SHA from A
+pushd release-notes >/dev/null
+  git fetch --prune origin
+  git checkout "${'$'}NOTES_SHA"
+popd >/dev/null
 
-                # Commit only if pointer changed
-                git add notes
-                if git diff --cached --quiet; then
-                  echo "Submodule already at desired SHA."
-                else
-                  git config --local user.name  "${'$'}GIT_USER_NAME"
-                  git config --local user.email "${'$'}GIT_USER_EMAIL"
-                  SHORT="$(cd notes && git rev-parse --short HEAD)"
-                  git commit -m "chore(notes): bump submodule to ${'$'}SHORT"
-                fi
+# Commit only if pointer changed
+git add release-notes
+if git diff --cached --quiet; then
+  echo "Submodule already at desired SHA."
+else
+  git config --local user.name  "${'$'}GIT_USER_NAME"
+  git config --local user.email "${'$'}GIT_USER_EMAIL"
+  SHORT="$(cd release-notes && git rev-parse --short HEAD)"
+  git commit -m "chore(release-notes): bump submodule to ${'$'}SHORT"
+fi
 
-                # Push via SSH Agent
-                if ! git diff --quiet origin/main..HEAD; then
-                  git push origin HEAD:main
-                else
-                  echo "Nothing to push."
-                fi
-                BASH
-            """.trimIndent()
+# Push via SSH Agent (TeamCity provides key)
+if ! git diff --quiet origin/main..HEAD; then
+  git push origin HEAD:main
+else
+  echo "Nothing to push."
+fi
+""".trimIndent()
         }
     }
 
