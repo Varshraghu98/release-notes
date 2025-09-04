@@ -157,10 +157,11 @@ object BumpSubmoduleInParent : BuildType({
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Make sure we actually got NOTES_SHA from A
-if [[ -z "${'$'}{NOTES_SHA:-}" ]]; then
-  echo "NOTES_SHA not provided from UpdateReleaseNotes"; exit 1
+if [[ ! -f notes-sha.txt ]]; then
+  echo "notes-sha.txt not found from A"; exit 1
 fi
+NOTES_SHA="$(cat notes-sha.txt)"
+echo "Using NOTES_SHA=${'$'}NOTES_SHA"
 
 # Trust GitHub host
 mkdir -p ~/.ssh
