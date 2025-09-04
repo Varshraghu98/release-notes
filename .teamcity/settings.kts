@@ -2,42 +2,52 @@ import jetbrains.buildServer.configs.kotlin.*
 import jetbrains.buildServer.configs.kotlin.buildSteps.script
 import jetbrains.buildServer.configs.kotlin.vcs.GitVcsRoot
 import jetbrains.buildServer.configs.kotlin.CheckoutMode
+import jetbrains.buildServer.configs.kotlin.buildFeatures.sshAgent
 
 version = "2025.07"
 
 project {
+    // ---- You can override these at Project → Parameters in the TC UI
     params {
         param("env.GIT_USER_NAME", "Varshini Raghunath")
-        param("env.GIT_USER_EMAIL", "your.email@example.com")
-        // Add as secure Password parameters in TC UI:
-        // env.GH_PAT_NOTES  (write to release-notes repo)
-        // env.GH_PAT_PARENT (write to parent repo)
+        param("env.GIT_USER_EMAIL", "you@example.com")
+        // No PATs needed; SSH handles checkout & push
     }
 
+    // VCS roots (SSH)
     vcsRoot(ReleaseNotesVcs)
     vcsRoot(ParentRepoVcs)
 
-    buildType(UpdateReleaseNotes)
-    buildType(BumpSubmoduleInParent)
+    // Build configs
+    buildType(UpdateReleaseNotes)      // A
+    buildType(BumpSubmoduleInParent)   // B
+
+    // B runs after A (via snapshot dependency defined inside B)
 }
 
-/* ------------ VCS roots ------------ */
+/* ------------ VCS roots (SSH + uploaded key) ------------ */
 
 object ReleaseNotesVcs : GitVcsRoot({
     id("ReleaseNotesVcs")
-    name = "release-notes"
-    url = "https://github.com/Varshraghu98/release-notes.git"
+    name = "release-notes (SSH)"
+    url = "git@github.com:Varshraghu98/release-notes.git"
     branch = "refs/heads/main"
+    authMethod = uploadedKey {
+        uploadedKey = "tc-release-bot"   // TeamCity → Project Settings → SSH Keys
+    }
 })
 
 object ParentRepoVcs : GitVcsRoot({
     id("ParentRepoVcs")
-    name = "parent-maven-repo"
-    url = "https://github.com/Varshraghu98/reproducable-mvn-build.git"
+    name = "parent-maven-repo (SSH)"
+    url = "git@github.com:Varshraghu98/reproducable-mvn-build.git"
     branch = "refs/heads/main"
+    authMethod = uploadedKey {
+        uploadedKey = "tc-release-bot"
+    }
 })
 
-/* ------------ A) Update notes repo ------------ */
+/* ------------ A) Update notes repo (commit & push over SSH) ------------ */
 
 object UpdateReleaseNotes : BuildType({
     id("UpdateReleaseNotes")
@@ -49,65 +59,66 @@ object UpdateReleaseNotes : BuildType({
     }
 
     params {
+        // Will be set by the step using a TeamCity service message
         param("env.NOTES_SHA", "")
+    }
+
+    features {
+        // Make the SSH private key available to the step for 'git push'
+        sshAgent {
+            teamcitySshKey = "tc-release-bot"
+        }
     }
 
     steps {
         script {
-            name = "fetch + commit + push"
+            name = "fetch + commit + push (SSH)"
             scriptContent = """
-        /usr/bin/env bash <<'BASH'
-        set -Eeuo pipefail
+                /usr/bin/env bash <<'BASH'
+                set -Eeuo pipefail
 
-        git fetch origin main
-        git checkout main
-        git pull --rebase origin main
+                # Trust GitHub host non-interactively
+                mkdir -p ~/.ssh
+                ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-        git config --local user.name  "${'$'}GIT_USER_NAME"
-        git config --local user.email "${'$'}GIT_USER_EMAIL"
+                git fetch origin main
+                git checkout main
+                git pull --rebase origin main
 
-        chmod +x ./fetchReleaseNotes.sh
-        ./fetchReleaseNotes.sh
+                # Identity (repo-local)
+                git config --local user.name  "${'$'}GIT_USER_NAME"
+                git config --local user.email "${'$'}GIT_USER_EMAIL"
 
-        git add latest
-        if git diff --cached --quiet; then
-          echo "No changes to commit."
-        else
-          git commit -m "docs(notes): refresh latest release notes"
-        fi
+                # Run your fetcher (must be executable, contains curl + write to ./latest)
+                chmod +x ./fetchReleaseNotes.sh
+                ./fetchReleaseNotes.sh
 
-        # --- inject PAT for push (TeamCity will mask the value) ---
-        # Define these as secure params in TC UI:
-        #   env.GH_PAT_NOTES  (Password type)
-        # You don't need a username; GitHub accepts 'x-access-token'.
-        ORIGIN_URL="$(git remote get-url origin)"
-        if [[ "${'$'}ORIGIN_URL" =~ ^https://github.com/ ]]; then
-          git remote set-url origin "https://x-access-token:${'$'}GH_PAT_NOTES@${'$'}{ORIGIN_URL#https://}"
-        elif [[ "${'$'}ORIGIN_URL" =~ ^git@github.com: ]]; then
-          git remote set-url origin "https://x-access-token:${'$'}GH_PAT_NOTES@github.com/${'$'}{ORIGIN_URL#git@github.com:}"
-        else
-          # fallback to explicit repo if needed
-          git remote set-url origin "https://x-access-token:${'$'}GH_PAT_NOTES@github.com/Varshraghu98/release-notes.git"
-        fi
-        # -----------------------------------------------------------
+                # Commit only if there are changes under latest/
+                git add latest
+                if git diff --cached --quiet; then
+                  echo "No changes to commit."
+                else
+                  git commit -m "docs(notes): refresh latest release notes"
+                fi
 
-        if ! git diff --quiet origin/main..HEAD; then
-          git push origin HEAD:main
-        else
-          echo "Nothing to push."
-        fi
+                # Push using SSH (via TeamCity SSH Agent feature)
+                if ! git diff --quiet origin/main..HEAD; then
+                  git push origin HEAD:main
+                else
+                  echo "Nothing to push."
+                fi
 
-        NOTES_SHA="$(git rev-parse HEAD)"
-        echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
-        echo "Notes SHA: ${'$'}NOTES_SHA"
-        BASH
-    """.trimIndent()
+                # Export resulting SHA for job B
+                NOTES_SHA="$(git rev-parse HEAD)"
+                echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
+                echo "Notes SHA: ${'$'}NOTES_SHA"
+                BASH
+            """.trimIndent()
         }
-
     }
 })
 
-/* ------------ B) Bump submodule in parent repo ------------ */
+/* ------------ B) Bump submodule in parent repo (SSH) ------------ */
 
 object BumpSubmoduleInParent : BuildType({
     id("BumpSubmoduleInParent")
@@ -118,52 +129,61 @@ object BumpSubmoduleInParent : BuildType({
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
+    features {
+        sshAgent {
+            teamcitySshKey = "tc-release-bot"
+        }
+    }
+
     steps {
         script {
-            name = "advance notes/ to NOTES_SHA + push"
+            name = "advance notes/ to NOTES_SHA + push (SSH)"
             scriptContent = """
-                set -euo pipefail
+                /usr/bin/env bash <<'BASH'
+                set -Eeuo pipefail
 
-                test -n "${'$'}{env.NOTES_SHA}" || { echo "NOTES_SHA not provided from A"; exit 1; }
+                # Ensure we got the SHA from A
+                test -n "${'$'}NOTES_SHA" || { echo "NOTES_SHA not provided from A"; exit 1; }
+
+                mkdir -p ~/.ssh
+                ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
                 git fetch origin main
                 git checkout main
                 git pull --rebase origin main
 
+                # Initialize/refresh submodule
                 git submodule update --init --recursive
 
+                # Move the submodule to the exact SHA produced by A
                 pushd notes >/dev/null
                   git fetch --prune origin
-                  git checkout "${'$'}{env.NOTES_SHA}"
+                  git checkout "${'$'}NOTES_SHA"
                 popd >/dev/null
 
+                # Commit only if pointer changed
                 git add notes
                 if git diff --cached --quiet; then
                   echo "Submodule already at desired SHA."
                 else
-                  git config --local user.name  "${'$'}{env.GIT_USER_NAME}"
-                  git config --local user.email "${'$'}{env.GIT_USER_EMAIL}"
+                  git config --local user.name  "${'$'}GIT_USER_NAME"
+                  git config --local user.email "${'$'}GIT_USER_EMAIL"
                   SHORT="$(cd notes && git rev-parse --short HEAD)"
                   git commit -m "chore(notes): bump submodule to ${'$'}SHORT"
                 fi
 
-                ORIGIN_URL="$(git remote get-url origin)"
-                if [[ "${'$'}ORIGIN_URL" =~ ^https:// ]]; then
-                  git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_PARENT}@${'$'}{ORIGIN_URL#https://}"
-                else
-                  git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_PARENT}@github.com/${'$'}{ORIGIN_URL#git@github.com:}"
-                fi
-
+                # Push via SSH Agent
                 if ! git diff --quiet origin/main..HEAD; then
                   git push origin HEAD:main
                 else
                   echo "Nothing to push."
                 fi
+                BASH
             """.trimIndent()
         }
     }
 
-    // <<< The correct way to enforce order: snapshot dependency >>>
+    // Run after A and receive env.NOTES_SHA
     dependencies {
         snapshot(UpdateReleaseNotes) {
             onDependencyFailure = FailureAction.FAIL_TO_START
