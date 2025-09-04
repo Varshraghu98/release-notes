@@ -63,9 +63,9 @@ object UpdateReleaseNotes : BuildType({
         git checkout main
         git pull --rebase origin main
 
-        # Use your TC params (set as env.GIT_USER_NAME / env.GIT_USER_EMAIL)
-        git config --local user.name  "${GIT_USER_NAME}"
-        git config --local user.email "${GIT_USER_EMAIL}"
+        # Use your TC params (env.GIT_USER_NAME / env.GIT_USER_EMAIL)
+        git config --local user.name  "${'$'}GIT_USER_NAME"
+        git config --local user.email "${'$'}GIT_USER_EMAIL"
 
         chmod +x ./fetchReleaseNotes.sh
         ./fetchReleaseNotes.sh
@@ -85,8 +85,8 @@ object UpdateReleaseNotes : BuildType({
         fi
 
         NOTES_SHA="$(git rev-parse HEAD)"
-        echo "##teamcity[setParameter name='env.NOTES_SHA' value='${NOTES_SHA}']"
-        echo "Notes SHA: ${NOTES_SHA}"
+        echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
+        echo "Notes SHA: ${'$'}NOTES_SHA"
         BASH
     """.trimIndent()
         }
