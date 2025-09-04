@@ -63,6 +63,7 @@ object UpdateReleaseNotes : BuildType({
         // Will be set by the step using a TeamCity service message
         param("env.NOTES_SHA", "")
     }
+    artifactRules = "notes-sha.txt"
 
     features {
         // Make the SSH private key available to the step for 'git push'
@@ -114,8 +115,8 @@ fi
 
 # Export resulting SHA for job B
 NOTES_SHA="$(git rev-parse HEAD)"
+echo "${'$'}NOTES_SHA" > notes-sha.txt
 echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
-echo "##teamcity[setParameter name='reverse.dep.env.NOTES_SHA' value='${'$'}NOTES_SHA']"
 echo "Notes SHA: ${'$'}NOTES_SHA"
 """.trimIndent()
         }
@@ -134,9 +135,13 @@ object BumpSubmoduleInParent : BuildType({
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
-    // Pull NOTES_SHA from A at queue/start time
-    params {
-        param("env.NOTES_SHA", "%dep.UpdateReleaseNotes.env.NOTES_SHA%")
+    artifactDependencies {
+        dependency(UpdateReleaseNotes) {
+            // prefer the A build from the same chain; else fall back to last finished
+            buildRule = Dependencies.BuildRule.SAME_CHAIN_OR_LAST_FINISHED
+            artifactRules = "notes-sha.txt"
+            cleanDestination = true
+        }
     }
 
 
