@@ -132,6 +132,12 @@ object BumpSubmoduleInParent : BuildType({
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
+    // ...
+    params {
+        // Pull the param from A by id
+        param("env.NOTES_SHA", "%dep.UpdateReleaseNotes.env.NOTES_SHA%")
+    }
+
     features {
         sshAgent {
             teamcitySshKey = "tc-release-bot"
