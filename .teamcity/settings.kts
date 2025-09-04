@@ -4,6 +4,7 @@ import jetbrains.buildServer.configs.kotlin.vcs.GitVcsRoot
 import jetbrains.buildServer.configs.kotlin.CheckoutMode
 import jetbrains.buildServer.configs.kotlin.buildFeatures.sshAgent
 import jetbrains.buildServer.configs.kotlin.triggers.finishBuildTrigger
+import jetbrains.buildServer.configs.kotlin.Dependencies.*
 
 version = "2025.07"
 
@@ -135,54 +136,35 @@ object BumpSubmoduleInParent : BuildType({
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
-
     features {
-        sshAgent {
-            teamcitySshKey = "tc-release-bot"
-        }
+        sshAgent { teamcitySshKey = "tc-release-bot" }
     }
 
-    // 👇 Auto-start B when A succeeds
+    // Auto-start B when A succeeds
     triggers {
         finishBuildTrigger {
-            buildType = "${UpdateReleaseNotes.id}"   // watch A
-            successfulOnly = true                    // only on SUCCESS
+            buildType = "${UpdateReleaseNotes.id}"
+            successfulOnly = true
         }
     }
 
     steps {
-        steps {
-            script {
-                name = "advance release-notes/ to NOTES_SHA + push (SSH)"
-                workingDir = "%teamcity.build.checkoutDir%"
-                scriptContent = """
+        script {
+            name = "advance release-notes/ to NOTES_SHA + push (SSH)"
+            workingDir = "%teamcity.build.checkoutDir%"
+            scriptContent = """
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Provide safe defaults so set -u won't die if env.* weren't passed
 : "${'$'}{GIT_USER_NAME:=TeamCity Bot}"
 : "${'$'}{GIT_USER_EMAIL:=tc-bot@example.invalid}"
 
 echo "PWD=${'$'}(pwd)"
-echo "Contents of checkout dir:"
-ls -la
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "ERROR: Not inside a git work tree"; exit 1; }
 
-# Must be inside a git work tree
-if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-  echo "ERROR: Not inside a git work tree"
-  exit 1
-fi
-
-# Double-check remote is your parent repo
-echo "Git remotes:"
-git remote -v || true
-
-# Read SHA from the artifact subfolder
+# Read SHA from artifact
 if [[ ! -f .dep/update-notes/notes-sha.txt ]]; then
-  echo "ERROR: .dep/update-notes/notes-sha.txt not found (artifact from A)."
-  ls -la .dep || true
-  ls -la .dep/update-notes || true
-  exit 1
+  echo "ERROR: .dep/update-notes/notes-sha.txt not found"; ls -la .dep || true; ls -la .dep/update-notes || true; exit 1
 fi
 NOTES_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
 echo "Using NOTES_SHA=${'$'}{NOTES_SHA}"
@@ -191,7 +173,7 @@ echo "Using NOTES_SHA=${'$'}{NOTES_SHA}"
 mkdir -p ~/.ssh
 ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-# Sync parent repo (this is your reproducable-mvn-build checkout)
+# Sync parent repo
 git fetch origin main
 git checkout main
 git pull --rebase origin main
@@ -201,13 +183,7 @@ git submodule update --init --recursive
 
 # Move the submodule to the exact SHA from A
 pushd release-notes >/dev/null
-  # Extra guard: ensure this really is a git repo (submodule)
-  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "ERROR: release-notes/ is not a git repo (submodule missing?)"
-    ls -la ..
-    git submodule status || true
-    exit 1
-  fi
+  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "ERROR: release-notes/ is not a git repo"; git submodule status || true; exit 1; }
   git fetch --prune origin
   git checkout "${'$'}{NOTES_SHA}"
 popd >/dev/null
@@ -230,20 +206,23 @@ else
   echo "Nothing to push."
 fi
 """.trimIndent()
-            }
+        }
     }
 
-    // Run after A and receive env.NOTES_SHA
+    // Dependencies must be INSIDE the BuildType body
     dependencies {
+        // Artifact with the SHA file
+        artifacts(UpdateReleaseNotes) {
+            artifactRules = "notes-sha.txt => .dep/update-notes/"
+            cleanDestination = true
+            buildRule = sameChainOrLastFinished()
+        }
+
+        // Snapshot dep for ordering + chain context
         snapshot(UpdateReleaseNotes) {
             onDependencyFailure = FailureAction.FAIL_TO_START
             onDependencyCancel = FailureAction.CANCEL
-        }
-        artifacts(UpdateReleaseNotes) {
-            // download into a safe subfolder under the checkout dir
-            artifactRules = "notes-sha.txt => .dep/update-notes/"
-            cleanDestination = true         // now safe; only cleans that folder
-            buildRule = sameChainOrLastFinished()
+            reuseBuilds = ReuseBuilds.SUCCESSFUL
         }
     }
 })
