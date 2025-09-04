@@ -74,47 +74,50 @@ object UpdateReleaseNotes : BuildType({
         script {
             name = "fetch + commit + push (SSH)"
             scriptContent = """
-                /usr/bin/env bash <<'BASH'
-                set -Eeuo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-                # Trust GitHub host non-interactively
-                mkdir -p ~/.ssh
-                ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+# (optional) debug
+# set -x
 
-                git fetch origin main
-                git checkout main
-                git pull --rebase origin main
+# Trust GitHub host non-interactively
+mkdir -p ~/.ssh
+ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
-                # Identity (repo-local)
-                git config --local user.name  "${'$'}GIT_USER_NAME"
-                git config --local user.email "${'$'}GIT_USER_EMAIL"
+git fetch origin main
+git checkout main
+git pull --rebase origin main
 
-                # Run your fetcher (must be executable, contains curl + write to ./latest)
-                chmod +x ./fetchReleaseNotes.sh
-                ./fetchReleaseNotes.sh
+# Identity (repo-local)
+git config --local user.name  "${'$'}GIT_USER_NAME"
+git config --local user.email "${'$'}GIT_USER_EMAIL"
 
-                # Commit only if there are changes under latest/
-                git add latest
-                if git diff --cached --quiet; then
-                  echo "No changes to commit."
-                else
-                  git commit -m "docs(notes): refresh latest release notes"
-                fi
+# Run your fetcher
+chmod +x ./fetchReleaseNotes.sh
+./fetchReleaseNotes.sh
 
-                # Push using SSH (via TeamCity SSH Agent feature)
-                if ! git diff --quiet origin/main..HEAD; then
-                  git push origin HEAD:main
-                else
-                  echo "Nothing to push."
-                fi
+# Commit only if there are changes under latest/
+git add latest
+if git diff --cached --quiet; then
+  echo "No changes to commit."
+else
+  git commit -m "docs(notes): refresh latest release notes"
+fi
 
-                # Export resulting SHA for job B
-                NOTES_SHA="$(git rev-parse HEAD)"
-                echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
-                echo "Notes SHA: ${'$'}NOTES_SHA"
-                BASH
-            """.trimIndent()
+# Push using SSH (TeamCity SSH Agent feature supplies the key)
+if ! git diff --quiet origin/main..HEAD; then
+  git push origin HEAD:main
+else
+  echo "Nothing to push."
+fi
+
+# Export resulting SHA for job B
+NOTES_SHA="$(git rev-parse HEAD)"
+echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
+echo "Notes SHA: ${'$'}NOTES_SHA"
+""".trimIndent()
         }
+
     }
 })
 
