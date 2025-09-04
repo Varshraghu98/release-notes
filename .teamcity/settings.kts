@@ -139,6 +139,14 @@ object BumpSubmoduleInParent : BuildType({
         }
     }
 
+    // 👇 Auto-start B when A succeeds
+    triggers {
+        finishBuildTrigger {
+            buildType = "${UpdateReleaseNotes.id}"   // watch A
+            successfulOnly = true                    // only on SUCCESS
+        }
+    }
+
     steps {
         script {
             name = "advance release-notes/ to NOTES_SHA + push (SSH)"
