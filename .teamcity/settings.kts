@@ -153,6 +153,7 @@ object BumpSubmoduleInParent : BuildType({
     steps {
         script {
             name = "advance release-notes/ to NOTES_SHA + push (SSH)"
+            workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
                #!/usr/bin/env bash
                set -Eeuo pipefail
