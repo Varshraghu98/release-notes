@@ -114,6 +114,7 @@ fi
 # Export resulting SHA for job B
 NOTES_SHA="$(git rev-parse HEAD)"
 echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
+echo "##teamcity[setParameter name='reverse.dep.env.NOTES_SHA' value='${'$'}NOTES_SHA']"
 echo "Notes SHA: ${'$'}NOTES_SHA"
 """.trimIndent()
         }
@@ -130,12 +131,6 @@ object BumpSubmoduleInParent : BuildType({
     vcs {
         root(ParentRepoVcs)
         checkoutMode = CheckoutMode.ON_AGENT
-    }
-
-    // ...
-    params {
-        // Pull the param from A by id
-        param("env.NOTES_SHA", "%dep.UpdateReleaseNotes.env.NOTES_SHA%")
     }
 
     features {
