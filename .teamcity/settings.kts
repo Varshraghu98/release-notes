@@ -63,7 +63,6 @@ object UpdateReleaseNotes : BuildType({
         git checkout main
         git pull --rebase origin main
 
-        # Use your TC params (env.GIT_USER_NAME / env.GIT_USER_EMAIL)
         git config --local user.name  "${'$'}GIT_USER_NAME"
         git config --local user.email "${'$'}GIT_USER_EMAIL"
 
@@ -77,7 +76,21 @@ object UpdateReleaseNotes : BuildType({
           git commit -m "docs(notes): refresh latest release notes"
         fi
 
-        # Push using the credentials already configured in the VCS root
+        # --- inject PAT for push (TeamCity will mask the value) ---
+        # Define these as secure params in TC UI:
+        #   env.GH_PAT_NOTES  (Password type)
+        # You don't need a username; GitHub accepts 'x-access-token'.
+        ORIGIN_URL="$(git remote get-url origin)"
+        if [[ "${'$'}ORIGIN_URL" =~ ^https://github.com/ ]]; then
+          git remote set-url origin "https://x-access-token:${'$'}GH_PAT_NOTES@${'$'}{ORIGIN_URL#https://}"
+        elif [[ "${'$'}ORIGIN_URL" =~ ^git@github.com: ]]; then
+          git remote set-url origin "https://x-access-token:${'$'}GH_PAT_NOTES@github.com/${'$'}{ORIGIN_URL#git@github.com:}"
+        else
+          # fallback to explicit repo if needed
+          git remote set-url origin "https://x-access-token:${'$'}GH_PAT_NOTES@github.com/Varshraghu98/release-notes.git"
+        fi
+        # -----------------------------------------------------------
+
         if ! git diff --quiet origin/main..HEAD; then
           git push origin HEAD:main
         else
@@ -90,6 +103,7 @@ object UpdateReleaseNotes : BuildType({
         BASH
     """.trimIndent()
         }
+
     }
 })
 
