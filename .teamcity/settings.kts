@@ -90,7 +90,6 @@ object UpdateReleaseNotes : BuildType({
         BASH
     """.trimIndent()
         }
-
     }
 })
 
