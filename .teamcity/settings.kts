@@ -59,20 +59,17 @@ object UpdateReleaseNotes : BuildType({
         /usr/bin/env bash <<'BASH'
         set -Eeuo pipefail
 
-        # Ensure main is current
         git fetch origin main
         git checkout main
         git pull --rebase origin main
 
-        # Identity (repo-local)
-        git config --local user.name  "${'$'}{env.GIT_USER_NAME}"
-        git config --local user.email "${'$'}{env.GIT_USER_EMAIL}"
+        # Use your TC params (set as env.GIT_USER_NAME / env.GIT_USER_EMAIL)
+        git config --local user.name  "${GIT_USER_NAME}"
+        git config --local user.email "${GIT_USER_EMAIL}"
 
-        # Run your script (must be executable and have #!/usr/bin/env bash)
         chmod +x ./fetchReleaseNotes.sh
         ./fetchReleaseNotes.sh
 
-        # Commit only if there are changes under latest/
         git add latest
         if git diff --cached --quiet; then
           echo "No changes to commit."
@@ -80,28 +77,20 @@ object UpdateReleaseNotes : BuildType({
           git commit -m "docs(notes): refresh latest release notes"
         fi
 
-        # Prepare remote with PAT for push
-        ORIGIN_URL="$(git remote get-url origin)"
-        if [[ "${'$'}ORIGIN_URL" =~ ^https:// ]]; then
-          git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_NOTES}@${'$'}{ORIGIN_URL#https://}"
-        else
-          git remote set-url origin "https://x-access-token:${'$'}{GH_PAT_NOTES}@github.com/${'$'}{ORIGIN_URL#git@github.com:}"
-        fi
-
-        # Push only if new commit exists
+        # Push using the credentials already configured in the VCS root
         if ! git diff --quiet origin/main..HEAD; then
           git push origin HEAD:main
         else
           echo "Nothing to push."
         fi
 
-        # Export resulting SHA for job B
         NOTES_SHA="$(git rev-parse HEAD)"
-        echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
-        echo "Notes SHA: ${'$'}NOTES_SHA"
+        echo "##teamcity[setParameter name='env.NOTES_SHA' value='${NOTES_SHA}']"
+        echo "Notes SHA: ${NOTES_SHA}"
         BASH
     """.trimIndent()
         }
+
     }
 })
 
