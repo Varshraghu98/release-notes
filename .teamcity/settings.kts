@@ -151,36 +151,68 @@ object BumpSubmoduleInParent : BuildType({
     }
 
     steps {
-        script {
-            name = "advance release-notes/ to NOTES_SHA + push (SSH)"
-            workingDir = "%teamcity.build.checkoutDir%"
-            scriptContent = """
+        steps {
+            script {
+                name = "advance release-notes/ to NOTES_SHA + push (SSH)"
+                workingDir = "%teamcity.build.checkoutDir%"
+                scriptContent = """
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# Provide safe defaults so set -u won't die if env.* weren't passed
+: "${'$'}{GIT_USER_NAME:=TeamCity Bot}"
+: "${'$'}{GIT_USER_EMAIL:=tc-bot@example.invalid}"
+
 echo "PWD=${'$'}(pwd)"
-git rev-parse --is-inside-work-tree || { echo "Not inside a git work tree"; exit 1; }
+echo "Contents of checkout dir:"
+ls -la
+
+# Must be inside a git work tree
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "ERROR: Not inside a git work tree"
+  exit 1
+fi
+
+# Double-check remote is your parent repo
+echo "Git remotes:"
+git remote -v || true
 
 # Read SHA from the artifact subfolder
 if [[ ! -f .dep/update-notes/notes-sha.txt ]]; then
-  echo "notes-sha.txt not found in .dep/update-notes/"; ls -la .dep/update-notes || true; exit 1
+  echo "ERROR: .dep/update-notes/notes-sha.txt not found (artifact from A)."
+  ls -la .dep || true
+  ls -la .dep/update-notes || true
+  exit 1
 fi
 NOTES_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
 echo "Using NOTES_SHA=${'$'}{NOTES_SHA}"
 
+# Trust GitHub host
 mkdir -p ~/.ssh
 ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
+# Sync parent repo (this is your reproducable-mvn-build checkout)
 git fetch origin main
 git checkout main
 git pull --rebase origin main
+
+# Ensure submodule initialized
 git submodule update --init --recursive
 
+# Move the submodule to the exact SHA from A
 pushd release-notes >/dev/null
+  # Extra guard: ensure this really is a git repo (submodule)
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "ERROR: release-notes/ is not a git repo (submodule missing?)"
+    ls -la ..
+    git submodule status || true
+    exit 1
+  fi
   git fetch --prune origin
   git checkout "${'$'}{NOTES_SHA}"
 popd >/dev/null
 
+# Commit only if pointer changed
 git add release-notes
 if git diff --cached --quiet; then
   echo "Submodule already at desired SHA."
@@ -191,14 +223,14 @@ else
   git commit -m "chore(release-notes): bump submodule to ${'$'}SHORT"
 fi
 
+# Push via SSH Agent (TeamCity provides key)
 if ! git diff --quiet origin/main..HEAD; then
   git push origin HEAD:main
 else
   echo "Nothing to push."
 fi
-
 """.trimIndent()
-        }
+            }
     }
 
     // Run after A and receive env.NOTES_SHA
