@@ -135,15 +135,6 @@ object BumpSubmoduleInParent : BuildType({
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
-    artifactDependencies {
-        dependency(UpdateReleaseNotes) {
-            // prefer the A build from the same chain; else fall back to last finished
-            buildRule = Dependencies.BuildRule.SAME_CHAIN_OR_LAST_FINISHED
-            artifactRules = "notes-sha.txt"
-            cleanDestination = true
-        }
-    }
-
 
     features {
         sshAgent {
@@ -215,6 +206,14 @@ fi
         snapshot(UpdateReleaseNotes) {
             onDependencyFailure = FailureAction.FAIL_TO_START
             onDependencyCancel = FailureAction.CANCEL
+        }
+        artifactDependencies {
+            dependency(UpdateReleaseNotes) {
+                // prefer the A build from the same chain; else fall back to last finished
+                buildRule = Dependencies.BuildRule.SAME_CHAIN_OR_LAST_FINISHED
+                artifactRules = "notes-sha.txt"
+                cleanDestination = true
+            }
         }
     }
 })
