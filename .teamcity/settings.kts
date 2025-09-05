@@ -18,7 +18,7 @@ project {
         param("env.GITHUB_PARENT_REPO", "Varshraghu98/reproducable-mvn-build")
         param("env.GITHUB_NOTES_REPO", "Varshraghu98/release-notes")
         param("env.VENDOR_DIR", "vendor/release-notes")
-        param("env.PR_BASE", "main")
+        param("env.PR_BASE", "main") // we push directly to this branch
     }
 
     // VCS roots (SSH)
@@ -26,8 +26,8 @@ project {
     vcsRoot(ParentRepoVcs)
 
     // Build configs
-    buildType(UpdateReleaseNotes)     // A (unchanged)
-    buildType(VendorNotesDirectPush)  // B (new: direct push to main)
+    buildType(UpdateReleaseNotes)     // A
+    buildType(VendorNotesDirectPush)  // B
 }
 
 /* ------------ VCS roots (SSH) ------------ */
@@ -40,6 +40,16 @@ object ReleaseNotesVcs : GitVcsRoot({
     authMethod = uploadedKey { uploadedKey = "tc-release-bot" }
 })
 
+object ParentRepoVcs : GitVcsRoot({
+    id("ParentRepoVcs")
+    name = "parent-maven-repo (SSH)"
+    url = "git@github.com:Varshraghu98/reproducable-mvn-build.git"
+    branch = "refs/heads/main"
+    authMethod = uploadedKey { uploadedKey = "tc-release-bot" }
+})
+
+/* ------------ A) Fetch + Update release-notes repo ------------ */
+
 object UpdateReleaseNotes : BuildType({
     id("UpdateReleaseNotes")
     name = "Fetch and Update Release Notes"
@@ -50,9 +60,8 @@ object UpdateReleaseNotes : BuildType({
         cleanCheckout = true
     }
 
-    // You can override these when triggering the build
     params {
-        // will be set at runtime after commit
+        // Will be set after commit
         param("env.NOTES_SHA", "")
     }
 
@@ -63,42 +72,38 @@ object UpdateReleaseNotes : BuildType({
         manifest.txt
     """.trimIndent()
 
-    features {
-        sshAgent { teamcitySshKey = "tc-release-bot" }
-    }
+    features { sshAgent { teamcitySshKey = "tc-release-bot" } }
 
     steps {
-        // Minimal wrapper: prep known_hosts, set git identity, run your script
         script {
             name = "Run fetchReleaseNotes.sh (commit + push)"
             scriptContent = """
                 set -eu
+                git config --local user.name  "%env.GIT_USER_NAME%"
+                git config --local user.email "%env.GIT_USER_EMAIL%"
 
-                # Run fetcher
                 chmod +x ./fetchReleaseNotes.sh
                 ./fetchReleaseNotes.sh
 
-                # Record the resulting commit SHA for downstream jobs
                 NOTES_SHA=$(git rev-parse HEAD)
                 printf "%s\n" "${'$'}NOTES_SHA" > notes-sha.txt
                 echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
-
                 echo "Updated release-notes to ${'$'}NOTES_SHA"
             """.trimIndent()
         }
     }
 })
 
-
-/* ------------ B) Vendor notes and push to main (SSH) ------------ */
+/* ------------ B) Vendor notes into parent repo (direct push) ------------ */
 
 object VendorNotesDirectPush : BuildType({
     id("VendorNotesDirectPush")
-    name = "B) Vendor Release Notes into Parent (Direct Push to main)"
+    name = "Vendor Release Notes into Parent (Direct Push to main)"
 
     vcs {
         root(ParentRepoVcs)
         checkoutMode = CheckoutMode.ON_AGENT
+        cleanCheckout = true
     }
 
     features { sshAgent { teamcitySshKey = "tc-release-bot" } }
@@ -112,14 +117,15 @@ object VendorNotesDirectPush : BuildType({
     }
 
     steps {
-        name = "Vendor notes @ NOTES_SHA + commit to main (SSH)"
-        workingDir = "%teamcity.build.checkoutDir%"
-        scriptContent = """
+        script {
+            name = "Vendor notes @ NOTES_SHA + commit to main (SSH)"
+            workingDir = "%teamcity.build.checkoutDir%"
+            scriptContent = """
                 #!/usr/bin/env sh
                 set -eu
-                : "${'$'}{GITHUB_NOTES_REPO:?Missing env.GITHUB_NOTES_REPO (owner/repo)}"
-                : "${'$'}{VENDOR_DIR:=vendor/release-notes}"
-                : "${'$'}{PR_BASE:=main}"
+                : "${'$'}{GITHUB_NOTES_REPO:=%env.GITHUB_NOTES_REPO%}"
+                : "${'$'}{VENDOR_DIR:=%env.VENDOR_DIR%}"
+                : "${'$'}{PR_BASE:=%env.PR_BASE%}"
 
                 # --- Input SHA from A
                 if [ ! -f .dep/update-notes/notes-sha.txt ]; then
@@ -172,8 +178,8 @@ object VendorNotesDirectPush : BuildType({
                   exit 0
                 fi
 
-                git config --local user.name  "${'$'}GIT_USER_NAME"
-                git config --local user.email "${'$'}GIT_USER_EMAIL"
+                git config --local user.name  "%env.GIT_USER_NAME%"
+                git config --local user.email "%env.GIT_USER_EMAIL%"
                 SHORT=$(git rev-parse --short "${'$'}NOTES_SHA")
                 git commit -m "docs(notes): vendor release-notes @ ${'$'}SHORT"
                 git pull --rebase origin "${'$'}PR_BASE"
@@ -181,7 +187,7 @@ object VendorNotesDirectPush : BuildType({
 
                 echo "Pushed vendored notes to ${'$'}PR_BASE"
             """.trimIndent()
-    }
+        }
     }
 
     dependencies {
