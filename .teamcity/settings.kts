@@ -9,11 +9,16 @@ import jetbrains.buildServer.configs.kotlin.Dependencies.*
 version = "2025.07"
 
 project {
-    // ---- You can override these at Project → Parameters in the TC UI
     params {
+        // Commit identity for both repos
         param("env.GIT_USER_NAME", "Varshini Raghunath")
         param("env.GIT_USER_EMAIL", "you@example.com")
-        // No PATs needed; SSH handles checkout & push
+
+        // Paths / repo names
+        param("env.GITHUB_PARENT_REPO", "Varshraghu98/reproducable-mvn-build")
+        param("env.GITHUB_NOTES_REPO", "Varshraghu98/release-notes")
+        param("env.VENDOR_DIR", "vendor/release-notes")
+        param("env.PR_BASE", "main") // we’ll push directly to this branch
     }
 
     // VCS roots (SSH)
@@ -21,22 +26,18 @@ project {
     vcsRoot(ParentRepoVcs)
 
     // Build configs
-    buildType(UpdateReleaseNotes)      // A
-    buildType(BumpSubmoduleInParent)   // B
-
-    // B runs after A (via snapshot dependency defined inside B)
+    buildType(UpdateReleaseNotes)     // A (unchanged)
+    buildType(VendorNotesDirectPush)  // B (new: direct push to main)
 }
 
-/* ------------ VCS roots (SSH + uploaded key) ------------ */
+/* ------------ VCS roots (SSH) ------------ */
 
 object ReleaseNotesVcs : GitVcsRoot({
     id("ReleaseNotesVcs")
     name = "release-notes (SSH)"
     url = "git@github.com:Varshraghu98/release-notes.git"
     branch = "refs/heads/main"
-    authMethod = uploadedKey {
-        uploadedKey = "tc-release-bot"   // TeamCity → Project Settings → SSH Keys
-    }
+    authMethod = uploadedKey { uploadedKey = "tc-release-bot" }
 })
 
 object ParentRepoVcs : GitVcsRoot({
@@ -44,12 +45,10 @@ object ParentRepoVcs : GitVcsRoot({
     name = "parent-maven-repo (SSH)"
     url = "git@github.com:Varshraghu98/reproducable-mvn-build.git"
     branch = "refs/heads/main"
-    authMethod = uploadedKey {
-        uploadedKey = "tc-release-bot"
-    }
+    authMethod = uploadedKey { uploadedKey = "tc-release-bot" }
 })
 
-/* ------------ A) Update notes repo (commit & push over SSH) ------------ */
+/* ------------ A) Update notes repo (unchanged) ------------ */
 
 object UpdateReleaseNotes : BuildType({
     id("UpdateReleaseNotes")
@@ -60,18 +59,15 @@ object UpdateReleaseNotes : BuildType({
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
-    params {
-        // Will be set by the step using a TeamCity service message
-        param("env.NOTES_SHA", "")
-    }
-    artifactRules = "notes-sha.txt"
+    params { param("env.NOTES_SHA", "") }
 
-    features {
-        // Make the SSH private key available to the step for 'git push'
-        sshAgent {
-            teamcitySshKey = "tc-release-bot"
-        }
-    }
+    // keep archiving the SHA (and human-friendly copy)
+    artifactRules = """
+        notes-sha.txt
+        notes.txt
+    """.trimIndent()
+
+    features { sshAgent { teamcitySshKey = "tc-release-bot" } }
 
     steps {
         script {
@@ -80,10 +76,6 @@ object UpdateReleaseNotes : BuildType({
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# (optional) debug
-# set -x
-
-# Trust GitHub host non-interactively
 mkdir -p ~/.ssh
 ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
 
@@ -91,15 +83,12 @@ git fetch origin main
 git checkout main
 git pull --rebase origin main
 
-# Identity (repo-local)
 git config --local user.name  "${'$'}GIT_USER_NAME"
 git config --local user.email "${'$'}GIT_USER_EMAIL"
 
-# Run your fetcher
 chmod +x ./fetchReleaseNotes.sh
 ./fetchReleaseNotes.sh
 
-# Commit only if there are changes under latest/
 git add latest
 if git diff --cached --quiet; then
   echo "No changes to commit."
@@ -107,40 +96,36 @@ else
   git commit -m "docs(notes): refresh latest release notes"
 fi
 
-# Push using SSH (TeamCity SSH Agent feature supplies the key)
 if ! git diff --quiet origin/main..HEAD; then
   git push origin HEAD:main
 else
   echo "Nothing to push."
 fi
 
-# Export resulting SHA for job B
 NOTES_SHA="$(git rev-parse HEAD)"
 echo "${'$'}NOTES_SHA" > notes-sha.txt
+echo "Latest release-notes commit: ${'$'}NOTES_SHA" > notes.txt
 echo "##teamcity[setParameter name='env.NOTES_SHA' value='${'$'}NOTES_SHA']"
 echo "Notes SHA: ${'$'}NOTES_SHA"
 """.trimIndent()
         }
-
     }
 })
 
-/* ------------ B) Bump submodule in parent repo (SSH) ------------ */
+/* ------------ B) Vendor notes and push to main (SSH) ------------ */
 
-object BumpSubmoduleInParent : BuildType({
-    id("BumpSubmoduleInParent")
-    name = "B) Bump Submodule in Parent Repo"
+object VendorNotesDirectPush : BuildType({
+    id("VendorNotesDirectPush")
+    name = "B) Vendor Release Notes into Parent (Direct Push to main)"
 
     vcs {
         root(ParentRepoVcs)
         checkoutMode = CheckoutMode.ON_AGENT
     }
 
-    features {
-        sshAgent { teamcitySshKey = "tc-release-bot" }
-    }
+    features { sshAgent { teamcitySshKey = "tc-release-bot" } }
 
-    // Auto-start B when A succeeds
+    // Auto-run B after A succeeds
     triggers {
         finishBuildTrigger {
             buildType = "${UpdateReleaseNotes.id}"
@@ -150,7 +135,7 @@ object BumpSubmoduleInParent : BuildType({
 
     steps {
         script {
-            name = "advance release-notes/ to NOTES_SHA + push (SSH)"
+            name = "Vendor notes @ NOTES_SHA + commit to main (SSH)"
             workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
 #!/usr/bin/env bash
@@ -158,67 +143,78 @@ set -Eeuo pipefail
 
 : "${'$'}{GIT_USER_NAME:=TeamCity Bot}"
 : "${'$'}{GIT_USER_EMAIL:=tc-bot@example.invalid}"
+: "${'$'}{GITHUB_NOTES_REPO:?Missing env.GITHUB_NOTES_REPO (owner/repo)}"
+: "${'$'}{VENDOR_DIR:=vendor/release-notes}"
+: "${'$'}{PR_BASE:=main}"
 
-echo "PWD=${'$'}(pwd)"
-git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "ERROR: Not inside a git work tree"; exit 1; }
-
-# Read SHA from artifact
+# --- Input SHA from A
 if [[ ! -f .dep/update-notes/notes-sha.txt ]]; then
-  echo "ERROR: .dep/update-notes/notes-sha.txt not found"; ls -la .dep || true; ls -la .dep/update-notes || true; exit 1
+  echo "ERROR: .dep/update-notes/notes-sha.txt not found"
+  ls -la .dep || true; ls -la .dep/update-notes || true
+  exit 1
 fi
-NOTES_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
-echo "Using NOTES_SHA=${'$'}{NOTES_SHA}"
+NOTES_SHA="$(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
+echo "Vendoring release-notes at ${'$'}NOTES_SHA"
 
-# Trust GitHub host
+# --- Prep local repo on main
 mkdir -p ~/.ssh
 ssh-keyscan -H github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+git fetch origin "${'$'}PR_BASE"
+git checkout "${'$'}PR_BASE"
+git pull --rebase origin "${'$'}PR_BASE"
 
-# Sync parent repo
-git fetch origin main
-git checkout main
-git pull --rebase origin main
-
-# Ensure submodule initialized
-git submodule update --init --recursive
-
-# Move the submodule to the exact SHA from A
-pushd release-notes >/dev/null
-  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || { echo "ERROR: release-notes/ is not a git repo"; git submodule status || true; exit 1; }
-  git fetch --prune origin
-  git checkout "${'$'}{NOTES_SHA}"
+# --- Clone notes repo at exact SHA to temp
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "${'$'}TMP_DIR"' EXIT
+git clone --no-checkout "git@github.com:${'$'}GITHUB_NOTES_REPO.git" "${'$'}TMP_DIR/notes"
+pushd "${'$'}TMP_DIR/notes" >/dev/null
+  git fetch --depth=1 origin "${'$'}NOTES_SHA":"${'$'}NOTES_SHA"
+  git checkout --force "${'$'}NOTES_SHA"
 popd >/dev/null
 
-# Commit only if pointer changed
-git add release-notes
+# --- Copy content (assumes notes under 'latest/' in notes repo)
+DEST_DIR="${'$'}VENDOR_DIR/latest"
+rm -rf "${'$'}DEST_DIR"
+mkdir -p "${'$'}DEST_DIR"
+rsync -a --delete "${'$'}TMP_DIR/notes/latest/" "${'$'}DEST_DIR/"
+
+# --- Write manifest + keep sha
+{
+  echo "Vendored-From: ${'$'}GITHUB_NOTES_REPO"
+  echo "Source-Commit: ${'$'}NOTES_SHA"
+  echo "Fetched-At: ${'$'}(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} > "${'$'}VENDOR_DIR/MODULE.txt"
+echo "${'$'}NOTES_SHA" > "${'$'}VENDOR_DIR/notes-sha.txt"
+
+# --- Commit if there are changes; push to main
+git add "${'$'}VENDOR_DIR"
 if git diff --cached --quiet; then
-  echo "Submodule already at desired SHA."
-else
-  git config --local user.name  "${'$'}GIT_USER_NAME"
-  git config --local user.email "${'$'}GIT_USER_EMAIL"
-  SHORT="${'$'}(cd release-notes && git rev-parse --short HEAD)"
-  git commit -m "chore(release-notes): bump submodule to ${'$'}SHORT"
+  echo "No changes to vendor directory. Nothing to push."
+  exit 0
 fi
 
-# Push via SSH Agent (TeamCity provides key)
-if ! git diff --quiet origin/main..HEAD; then
-  git push origin HEAD:main
-else
-  echo "Nothing to push."
-fi
+git config --local user.name  "${'$'}GIT_USER_NAME"
+git config --local user.email "${'$'}GIT_USER_EMAIL"
+SHORT="$(git rev-parse --short "${'$'}NOTES_SHA")"
+git commit -m "docs(notes): vendor release-notes @ ${'$'}SHORT"
+
+# Pull --rebase once more to reduce push conflicts on a busy main
+git pull --rebase origin "${'$'}PR_BASE"
+git push origin HEAD:"${'$'}PR_BASE"
+
+echo "Pushed vendored notes to ${'$'}PR_BASE"
 """.trimIndent()
         }
     }
 
-    // Dependencies must be INSIDE the BuildType body
     dependencies {
-        // Artifact with the SHA file
+        // artifacts from A
         artifacts(UpdateReleaseNotes) {
             artifactRules = "notes-sha.txt => .dep/update-notes/"
             cleanDestination = true
             buildRule = sameChainOrLastFinished()
         }
-
-        // Snapshot dep for ordering + chain context
+        // order
         snapshot(UpdateReleaseNotes) {
             onDependencyFailure = FailureAction.FAIL_TO_START
             onDependencyCancel = FailureAction.CANCEL
