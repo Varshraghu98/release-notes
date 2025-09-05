@@ -122,7 +122,7 @@ object VendorNotesDirectPush : BuildType({
             workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
             set -eu
-            chmod +x vendor-release-notes.sh
+            chmod +x ./vendor-release-notes.sh
             GITHUB_NOTES_REPO="%env.GITHUB_NOTES_REPO%" \
             VENDOR_DIR="%env.VENDOR_DIR%" \
             PR_BASE="%env.PR_BASE%" \
