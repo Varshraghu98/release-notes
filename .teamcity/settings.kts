@@ -26,8 +26,8 @@ project {
     vcsRoot(ParentRepoVcs)
 
     // Build configs
-    buildType(UpdateReleaseNotes)     // A
-    buildType(VendorNotesDirectPush)  // B
+    buildType(UpdateReleaseNotes)
+    buildType(VendorNotesDirectPush)
 }
 
 /* ------------ VCS roots (SSH) ------------ */
@@ -122,11 +122,12 @@ object VendorNotesDirectPush : BuildType({
             workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
             set -eu
-            chmod +x ./vendor-release-notes.sh
+             chmod +x buildscripts/vendor-release-notes.sh
+            
             GITHUB_NOTES_REPO="%env.GITHUB_NOTES_REPO%" \
             VENDOR_DIR="%env.VENDOR_DIR%" \
             PR_BASE="%env.PR_BASE%" \
-            ./vendor-release-notes.sh
+            buildscripts/vendor-release-notes.sh
         """.trimIndent()
         }
     }
