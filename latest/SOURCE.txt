@@ -1,5 +1,5 @@
 Source-URL: https://nginx.org/en/docs/njs/changes.html
-Retrieved-At-UTC: 2025-09-05T07:41:33Z
+Retrieved-At-UTC: 2025-09-05T07:43:28Z
 SHA256: 2bf610eb557429b15af0a36ef45cb620a30d887ca9744de80e5063502bcb46da
 File: RELEASE_NOTES.txt
 Version: latest
