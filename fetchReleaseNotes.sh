@@ -34,21 +34,15 @@ mv "$tmpfile" "$NOTES_FILE"
 # Compute SHA256 (sha256sum preferred; fallback to shasum)
 if command -v sha256sum >/dev/null 2>&1; then
   NOTES_SHA="$(sha256sum "$NOTES_FILE" | awk '{print $1}')"
-elif command -v shasum >/dev/null 2>&1; then
-  NOTES_SHA="$(shasum -a 256 "$NOTES_FILE" | awk '{print $1}')"
-else
-  echo "Need sha256sum or shasum on the agent" >&2
-  exit 127
 fi
 
 FETCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Write manifest *without* commit first (we'll amend after commit)
+# Write manifest (no commit SHA here)
 {
   echo "source_url=$SRC_URL"
   echo "fetched_at_utc=$FETCHED_AT"
   echo "release_txt_sha256=$NOTES_SHA"
-  # release_notes_repo_commit will be filled after commit
 } > "$MANIFEST_FILE"
 
 git add "$NOTES_FILE" "$MANIFEST_FILE"
@@ -61,20 +55,9 @@ fi
 
 git commit -m "Update release notes from $SRC_URL at $FETCHED_AT"
 
-# Now amend manifest with the commit SHA of this repo
-RELNOTES_SHA="$(git rev-parse HEAD)"
-if grep -q '^release_notes_repo_commit=' "$MANIFEST_FILE"; then
-  # portable in-place edit
-  sed -i.bak "s/^release_notes_repo_commit=.*/release_notes_repo_commit=$RELNOTES_SHA/" "$MANIFEST_FILE" || true
-  rm -f "${MANIFEST_FILE}.bak"
-else
-  printf "release_notes_repo_commit=%s\n" "$RELNOTES_SHA" >> "$MANIFEST_FILE"
-fi
-
-git add "$MANIFEST_FILE"
-git commit --amend --no-edit
-
-# Push to main (adjust branch if needed)
 git push origin HEAD:main
 
-echo "✅ Wrote $NOTES_FILE and $MANIFEST_FILE and pushed commit $RELNOTES_SHA"
+# Print the commit we pushed (for CI to capture if desired)
+RELNOTES_SHA="$(git rev-parse HEAD)"
+echo "release_notes_repo_commit=$RELNOTES_SHA"
+echo "✅ Updated $NOTES_FILE and $MANIFEST_FILE and pushed $RELNOTES_SHA"
