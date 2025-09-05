@@ -178,13 +178,13 @@ rm -rf "${'$'}DEST_DIR"
 mkdir -p "${'$'}DEST_DIR"
 rsync -a --delete "${'$'}TMP_DIR/notes/latest/" "${'$'}DEST_DIR/"
 
-# --- Write manifest + keep sha
+
+echo "${'$'}NOTES_SHA" > "${'$'}VENDOR_DIR/notes-sha.txt"
 {
   echo "Vendored-From: ${'$'}GITHUB_NOTES_REPO"
   echo "Source-Commit: ${'$'}NOTES_SHA"
-  echo "Fetched-At: ${'$'}(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "Fetched-At: ${'$'}(date -u +%%%%Y-%%%%m-%%%%dT%%%%H:%%%%M:%%%%SZ)"
 } > "${'$'}VENDOR_DIR/MODULE.txt"
-echo "${'$'}NOTES_SHA" > "${'$'}VENDOR_DIR/notes-sha.txt"
 
 # --- Commit if there are changes; push to main
 git add "${'$'}VENDOR_DIR"
