@@ -118,77 +118,19 @@ object VendorNotesDirectPush : BuildType({
 
     steps {
         script {
-            name = "Vendor notes @ NOTES_SHA + commit to main (SSH)"
+            name = "Vendor release notes (script)"
             workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
-                #!/usr/bin/env sh
-                set -eu
-                : "${'$'}{GITHUB_NOTES_REPO:=%env.GITHUB_NOTES_REPO%}"
-                : "${'$'}{VENDOR_DIR:=%env.VENDOR_DIR%}"
-                : "${'$'}{PR_BASE:=%env.PR_BASE%}"
-
-                # --- Input SHA from A
-                if [ ! -f .dep/update-notes/notes-sha.txt ]; then
-                  echo "ERROR: .dep/update-notes/notes-sha.txt not found"; exit 1
-                fi
-                NOTES_SHA=$(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)
-                echo "Vendoring release-notes at ${'$'}NOTES_SHA"
-
-                # --- Prep local repo on PR_BASE
-                git fetch origin "${'$'}PR_BASE"
-                git checkout "${'$'}PR_BASE"
-                git pull --rebase origin "${'$'}PR_BASE"
-
-                # --- Clone notes repo at exact SHA to temp
-                TMP_DIR=$(mktemp -d)
-                trap 'rm -rf "${'$'}TMP_DIR"' EXIT
-                git clone --no-checkout "git@github.com:${'$'}GITHUB_NOTES_REPO.git" "${'$'}TMP_DIR/notes"
-                git -C "${'$'}TMP_DIR/notes" fetch --depth=1 origin "${'$'}NOTES_SHA":"${'$'}NOTES_SHA"
-                git -C "${'$'}TMP_DIR/notes" checkout --force "${'$'}NOTES_SHA"
-
-                # --- Copy ONLY root files: release.txt + manifest.txt
-                DEST_DIR="${'$'}VENDOR_DIR"
-                mkdir -p "${'$'}DEST_DIR"
-                cp -f "${'$'}TMP_DIR/notes/release.txt"  "${'$'}DEST_DIR/release.txt"
-                cp -f "${'$'}TMP_DIR/notes/manifest.txt" "${'$'}DEST_DIR/manifest.txt"
-
-                # --- Integrity: ensure manifest's hash matches the file (if present)
-                exp=$(grep '^release_txt_sha256=' "${'$'}DEST_DIR/manifest.txt" | cut -d= -f2 || true)
-                if [ -n "${'$'}exp" ]; then
-                  act=$(sha256sum "${'$'}DEST_DIR/release.txt" | awk '{print $1}')
-                  if [ "${'$'}exp" != "${'$'}act" ]; then
-                    echo "ERROR: release.txt hash mismatch (manifest=${'$'}exp, actual=${'$'}act)"; exit 1
-                  fi
-                fi
-
-                # --- Update manifest with the vendored commit + metadata
-                # remove old lines if present
-                sed -i.bak '/^release_notes_repo_commit=/d;/^vendored_/d' "${'$'}DEST_DIR/manifest.txt" || true
-                rm -f "${'$'}DEST_DIR/manifest.txt.bak"
-                {
-                  echo "release_notes_repo_commit=${'$'}NOTES_SHA"
-                  echo "vendored_at_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-                  echo "vendored_parent_repo=$(git remote get-url origin 2>/dev/null || echo parent)"
-                } >> "${'$'}DEST_DIR/manifest.txt"
-
-                # --- Commit if there are changes; push to main
-                git add "${'$'}DEST_DIR/release.txt" "${'$'}DEST_DIR/manifest.txt"
-                if git diff --cached --quiet; then
-                  echo "No changes to vendor directory. Nothing to push."
-                  exit 0
-                fi
-
-                git config --local user.name  "%env.GIT_USER_NAME%"
-                git config --local user.email "%env.GIT_USER_EMAIL%"
-                SHORT=$(git rev-parse --short "${'$'}NOTES_SHA")
-                git commit -m "docs(notes): vendor release-notes @ ${'$'}SHORT"
-                git pull --rebase origin "${'$'}PR_BASE"
-                git push origin HEAD:"${'$'}PR_BASE"
-
-                echo "Pushed vendored notes to ${'$'}PR_BASE"
-            """.trimIndent()
+            set -eu
+            chmod +x vendor-release-notes.sh
+            GITHUB_NOTES_REPO="%env.GITHUB_NOTES_REPO%" \
+            VENDOR_DIR="%env.VENDOR_DIR%" \
+            PR_BASE="%env.PR_BASE%" \
+            ./vendor-release-notes.sh
+        """.trimIndent()
         }
     }
+
 
     dependencies {
         // artifacts from A
