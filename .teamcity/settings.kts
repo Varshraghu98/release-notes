@@ -68,7 +68,6 @@ object UpdateReleaseNotes : BuildType({
     // Archive the updated content + the SHA we produced
     artifactRules = """
         notes-sha.txt
-        release.txt
         manifest.txt
     """.trimIndent()
 
@@ -121,70 +120,122 @@ object VendorNotesDirectPush : BuildType({
             name = "Vendor release notes (script)"
             workingDir = "%teamcity.build.checkoutDir%"
             scriptContent = """
-                 #!/usr/bin/env bash
+                #!/usr/bin/env bash
                 set -euo pipefail
 
-                # -------- Config (override via env in TeamCity) --------
-                : "${'$'}{GITHUB_NOTES_REPO:=Varshraghu98/release-notes}"   # owner/repo
-                : "${'$'}{VENDOR_DIR:=vendor/release-notes}"                # where to copy in parent repo
-                : "${'$'}{PR_BASE:=main}"                                   # branch to push to
-                # NOTES_SHA: preferred via env; otherwise read from .dep/update-notes/notes-sha.txt
-                # -------------------------------------------------------
+                # ── Configuration (override via TeamCity env) ───────────────────────────────────
+                : "${'$'}{GITHUB_NOTES_REPO:=Varshraghu98/release-notes}"   # owner/repo of the notes source
+                : "${'$'}{VENDOR_DIR:=vendor/release-notes}"                # parent repo path to place vendored files
+                : "${'$'}{PR_BASE:=main}"                                   # parent repo branch to update
+                # ────────────────────────────────────────────────────────────────────────────────
 
-                # Determine which commit to vendor
+                NOTES_SOURCE_GIT_REPO="${'$'}GITHUB_NOTES_REPO"
+                VENDORED_NOTES_DIR="${'$'}VENDOR_DIR"
+                PARENT_REPO_TARGET_BRANCH="${'$'}PR_BASE"
+
+                # Resolve which commit to vendor
                 if [ -n "${'$'}{NOTES_SHA:-}" ]; then
-                  SHA="${'$'}NOTES_SHA"
+                  NOTES_SOURCE_COMMIT_SHA="${'$'}NOTES_SHA"
                 elif [ -f ".dep/update-notes/notes-sha.txt" ]; then
-                  SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
+                  NOTES_SOURCE_COMMIT_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
                 else
                   echo "ERROR: NOTES_SHA not set and .dep/update-notes/notes-sha.txt not found" >&2
                   exit 2
                 fi
 
-                echo "Vendoring release-notes at commit: ${'$'}SHA"
+                echo "Vendoring release-notes from '${'$'}NOTES_SOURCE_GIT_REPO' at commit ${'$'}NOTES_SOURCE_COMMIT_SHA"
 
-                # Ensure we're on the target branch in the parent repo
-                git fetch origin "${'$'}PR_BASE"
-                git checkout "${'$'}PR_BASE"
-                git pull --rebase origin "${'$'}PR_BASE"
+                # Ensure we are on the target branch in the parent repo
+                git fetch origin "${'$'}PARENT_REPO_TARGET_BRANCH"
+                git checkout "${'$'}PARENT_REPO_TARGET_BRANCH"
+                git pull --rebase origin "${'$'}PARENT_REPO_TARGET_BRANCH"
 
-                # Clone the release-notes repo at the exact commit
-                TMP_DIR="${'$'}(mktemp -d)"
-                cleanup() { rm -rf "${'$'}TMP_DIR"; }
-                trap cleanup EXIT
+                # Clone notes repo at the exact commit
+                TEMP_NOTES_CLONE_DIR="${'$'}(mktemp -d)"
+                cleanup_temp_dir() { rm -rf "${'$'}TEMP_NOTES_CLONE_DIR"; }
+                trap cleanup_temp_dir EXIT
 
-                git clone --no-checkout "git@github.com:${'$'}{GITHUB_NOTES_REPO}.git" "${'$'}TMP_DIR/notes"
-                git -C "${'$'}TMP_DIR/notes" fetch --depth=1 origin "${'$'}SHA":"${'$'}SHA"
-                git -C "${'$'}TMP_DIR/notes" checkout --force "${'$'}SHA"
+                git clone --no-checkout "git@github.com:${'$'}{NOTES_SOURCE_GIT_REPO}.git" "${'$'}TEMP_NOTES_CLONE_DIR/notes"
+                git -C "${'$'}TEMP_NOTES_CLONE_DIR/notes" fetch --depth=1 origin "${'$'}NOTES_SOURCE_COMMIT_SHA":"${'$'}NOTES_SOURCE_COMMIT_SHA"
+                git -C "${'$'}TEMP_NOTES_CLONE_DIR/notes" checkout --force "${'$'}NOTES_SOURCE_COMMIT_SHA"
 
-                # Copy ONLY root files: release.txt + manifest.txt
-                DEST_DIR="${'$'}VENDOR_DIR"
-                mkdir -p "${'$'}DEST_DIR"
-                cp -f "${'$'}TMP_DIR/notes/release.txt"  "${'$'}DEST_DIR/release.txt"
-                cp -f "${'$'}TMP_DIR/notes/manifest.txt" "${'$'}DEST_DIR/manifest.txt"
-
-                # Integrity check: if manifest has a recorded hash, verify it (requires sha256sum)
-                exp="${'$'}(grep '^release_txt_sha256=' "${'$'}DEST_DIR/manifest.txt" | cut -d= -f2 || true)"
-                if [ -n "${'$'}exp" ]; then
-                  if ! command -v sha256sum >/dev/null 2>&1; then
-                    echo "ERROR: sha256sum not found but manifest contains a checksum" >&2
-                    exit 127
-                  fi
-                  act="${'$'}(sha256sum "${'$'}DEST_DIR/release.txt" | awk '{print ${'$'}1}')"
-                  if [ "${'$'}exp" != "${'$'}act" ]; then
-                    echo "ERROR: release.txt hash mismatch (manifest=${'$'}exp, actual=${'$'}act)" >&2
-                    exit 1
-                  fi
+                # Require manifest.txt
+                MANIFEST_PATH="${'$'}TEMP_NOTES_CLONE_DIR/notes/manifest.txt"
+                if [ ! -f "${'$'}MANIFEST_PATH" ]; then
+                  echo "ERROR: manifest.txt not found in notes repo at commit ${'$'}NOTES_SOURCE_COMMIT_SHA" >&2
+                  exit 1
                 fi
 
-                # Update manifest with ONLY the vendored commit SHA
-                # (remove any prior line, then append the new one)
-                sed -i.bak '/^release_notes_repo_commit=/d' "${'$'}DEST_DIR/manifest.txt" || true
-                rm -f "${'$'}DEST_DIR/manifest.txt.bak"
-                echo "release_notes_repo_commit=${'$'}SHA" >> "${'$'}DEST_DIR/manifest.txt"
+                # Read expected checksum (MUST exist)
+                EXPECTED_NOTES_SHA256="${'$'}(grep -E '^release_txt_sha256=' "${'$'}MANIFEST_PATH" | cut -d= -f2 || true)"
+                if [ -z "${'$'}EXPECTED_NOTES_SHA256" ]; then
+                  echo "ERROR: manifest.txt lacks 'release_txt_sha256='; cannot determine notes file." >&2
+                  exit 1
+                fi
 
-                # Commit (only if there are changes) and push
-                git add "${'$'}DEST_DIR/release.txt" "${'$'}DEST_DIR/manifest.txt"
+                # Helper for SHA-256
+                compute_sha256() {
+                  local file_path="${'$'}1"
+                  if command -v sha256sum >/dev/null 2>&1; then
+                    sha256sum "${'$'}file_path" | awk '{print ${'$'}1}'
+                  elif command -v shasum >/dev/null 2>&1; then
+                    shasum -a 256 "${'$'}file_path" | awk '{print ${'$'}1}'
+                  elif command -v openssl >/dev/null 2>&1; then
+                    openssl dgst -sha256 -r "${'$'}file_path" | awk '{print ${'$'}1}'
+                  else
+                    echo ""
+                  fi
+                }
+
+                # Gather candidate files in repo root (exclude manifest + dotfiles)
+                CANDIDATE_ROOT_FILES=()
+                while IFS= read -r -d '' f; do
+                  CANDIDATE_ROOT_FILES+=("${'$'}f")
+                done < <(find "${'$'}TEMP_NOTES_CLONE_DIR/notes" -maxdepth 1 -type f ! -name 'manifest.txt' ! -name '.*' -print0)
+
+                # Find the single file whose SHA matches EXPECTED_NOTES_SHA256
+                MATCHING_FILES=()
+                for candidate in "${'$'}{CANDIDATE_ROOT_FILES[@]}"; do
+                  candidate_sha="${'$'}(compute_sha256 "${'$'}candidate")"
+                  if [ -z "${'$'}candidate_sha" ]; then
+                    echo "ERROR: Need a SHA-256 tool (sha256sum/shasum/openssl) to verify manifest." >&2
+                    exit 127
+                  fi
+                  if [ "${'$'}candidate_sha" = "${'$'}EXPECTED_NOTES_SHA256" ]; then
+                    MATCHING_FILES+=("${'$'}candidate")
+                  fi
+                done
+
+                if [ "${'$'}{#MATCHING_FILES[@]}" -eq 0 ]; then
+                  echo "ERROR: No file in notes repo root matches manifest checksum: ${'$'}EXPECTED_NOTES_SHA256" >&2
+                  echo "Checked candidates:" >&2
+                  for c in "${'$'}{CANDIDATE_ROOT_FILES[@]}"; do
+                    csha="${'$'}(compute_sha256 "${'$'}c")"
+                    echo " - ${'$'}(basename "${'$'}c"): ${'$'}csha" >&2
+                  done
+                  exit 1
+                elif [ "${'$'}{#MATCHING_FILES[@]}" -gt 1 ]; then
+                  echo "ERROR: Multiple files match the manifest checksum (ambiguous):" >&2
+                  for c in "${'$'}{MATCHING_FILES[@]}"; do echo " - ${'$'}(basename "${'$'}c")" >&2; done
+                  exit 1
+                fi
+
+                RELEASE_NOTES_SOURCE_PATH="${'$'}{MATCHING_FILES[0]}"
+                RELEASE_NOTES_FILENAME="${'$'}(basename "${'$'}RELEASE_NOTES_SOURCE_PATH")"
+                echo "Verified release-notes file via SHA-256: ${'$'}RELEASE_NOTES_FILENAME"
+
+                # Copy notes + manifest to vendor dir (preserve filename)
+                mkdir -p "${'$'}VENDORED_NOTES_DIR"
+                cp -f "${'$'}RELEASE_NOTES_SOURCE_PATH" "${'$'}VENDORED_NOTES_DIR/${'$'}RELEASE_NOTES_FILENAME"
+                cp -f "${'$'}MANIFEST_PATH"             "${'$'}VENDORED_NOTES_DIR/manifest.txt"
+
+                # Append vendored commit SHA to manifest (replace previous if any)
+                sed -i.bak '/^release_notes_repo_commit=/d' "${'$'}VENDORED_NOTES_DIR/manifest.txt" || true
+                rm -f "${'$'}VENDORED_NOTES_DIR/manifest.txt.bak"
+                echo "release_notes_repo_commit=${'$'}NOTES_SOURCE_COMMIT_SHA" >> "${'$'}VENDORED_NOTES_DIR/manifest.txt"
+
+                # Stage and push only if changes exist
+                git add "${'$'}VENDORED_NOTES_DIR/${'$'}RELEASE_NOTES_FILENAME" "${'$'}VENDORED_NOTES_DIR/manifest.txt"
                 if git diff --cached --quiet; then
                   echo "No changes to vendor directory. Nothing to push."
                   exit 0
@@ -195,12 +246,12 @@ object VendorNotesDirectPush : BuildType({
                 git config --local user.name  "${'$'}GIT_USER_NAME"
                 git config --local user.email "${'$'}GIT_USER_EMAIL"
 
-                SHORT="${'$'}(git rev-parse --short "${'$'}SHA")"
-                git commit -m "docs(notes): vendor release-notes @ ${'$'}SHORT"
-                git pull --rebase origin "${'$'}PR_BASE"
-                git push origin HEAD:"${'$'}PR_BASE"
+                SHORT_NOTES_COMMIT="${'$'}(git rev-parse --short "${'$'}NOTES_SOURCE_COMMIT_SHA")"
+                git commit -m "docs(notes): vendor ${'$'}{RELEASE_NOTES_FILENAME} @ ${'$'}SHORT_NOTES_COMMIT"
+                git pull --rebase origin "${'$'}PARENT_REPO_TARGET_BRANCH"
+                git push origin HEAD:"${'$'}PARENT_REPO_TARGET_BRANCH"
 
-                echo "Pushed vendored notes to ${'$'}PR_BASE"
+                echo "Pushed vendored notes (${'$'}RELEASE_NOTES_FILENAME) to ${'$'}PARENT_REPO_TARGET_BRANCH"
            """.trimIndent()
         }
     }
