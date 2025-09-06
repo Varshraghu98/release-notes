@@ -167,7 +167,7 @@ object VendorNotesDirectPush : BuildType({
                 fi
 
                 # Read expected checksum (MUST exist)
-                EXPECTED_NOTES_SHA256="${'$'}(grep -E '^release_txt_sha256=' "${'$'}MANIFEST_PATH" | cut -d= -f2 || true)"
+                EXPECTED_NOTES_SHA256="${'$'}(grep -E '^release_notes_sha256=' "${'$'}MANIFEST_PATH" | cut -d= -f2 || true)"
                 if [ -z "${'$'}EXPECTED_NOTES_SHA256" ]; then
                   echo "ERROR: manifest.txt lacks 'release_txt_sha256='; cannot determine notes file." >&2
                   exit 1
