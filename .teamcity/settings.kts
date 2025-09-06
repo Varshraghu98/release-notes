@@ -120,7 +120,7 @@ object VendorNotesDirectPush : BuildType({
         script {
             name = "Vendor release notes"
             scriptContent = """
-            chmod +x buildscripts/print-sha256.sh
+            chmod +x buildscripts/vendor-release-notes.sh
             buildscripts/vendor-release-notes.sh
         """.trimIndent()
             param("env.GITHUB_NOTES_REPO", "%env.GITHUB_NOTES_REPO%")
