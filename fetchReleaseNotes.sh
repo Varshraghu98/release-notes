@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-set -euo pipefail
+set -euo
 
 # ===== config (override in CI as needed) =====
 : "${SRC_URL:=https://downloads.mysql.com/docs/mysql-9.0-relnotes-en.pdf}"   # marketing URL
