@@ -1,3 +1,3 @@
 source_url=https://downloads.mysql.com/docs/mysql-9.0-relnotes-en.pdf
-fetched_at_utc=2025-09-06T14:57:41Z
+fetched_at_utc=2025-09-06T15:02:24Z
 release_notes_sha256=92de0473f2b9760c44dbd16f03917051ce2e419474adcd905ec2e5cc42515e2f
