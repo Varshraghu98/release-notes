@@ -118,91 +118,19 @@ object VendorNotesDirectPush : BuildType({
 
     steps {
         script {
-            name = "Vendor release notes (script)"
-            workingDir = "%teamcity.build.checkoutDir%"
+            name = "Vendor release notes"
             scriptContent = """
-                #!/usr/bin/env bash
-                set -euo pipefail
-
-                # ── Configuration (override via TeamCity env) ───────────────────────────────────
-                : "${'$'}{GITHUB_NOTES_REPO:=Varshraghu98/release-notes}"   # owner/repo of the notes source
-                : "${'$'}{VENDOR_DIR:=vendor/release-notes}"                # parent repo path to place vendored files
-                : "${'$'}{PR_BASE:=main}"                                   # parent repo branch to update
-                : "${'$'}{REL_PATH:?REL_PATH must be set }"
-                # ────────────────────────────────────────────────────────────────────────────────
-
-                NOTES_SOURCE_GIT_REPO="${'$'}GITHUB_NOTES_REPO"
-                VENDORED_NOTES_DIR="${'$'}VENDOR_DIR"
-                PARENT_REPO_TARGET_BRANCH="${'$'}PR_BASE"
-
-                # Resolve which commit to vendor
-                if [ -n "${'$'}{NOTES_SHA:-}" ]; then
-                  NOTES_SOURCE_COMMIT_SHA="${'$'}NOTES_SHA"
-                elif [ -f ".dep/update-notes/notes-sha.txt" ]; then
-                  NOTES_SOURCE_COMMIT_SHA="${'$'}(tr -d '[:space:]' < .dep/update-notes/notes-sha.txt)"
-                else
-                  echo "ERROR: NOTES_SHA not set and .dep/update-notes/notes-sha.txt not found" >&2
-                  exit 2
-                fi
-
-                echo "Vendoring release-notes from '${'$'}NOTES_SOURCE_GIT_REPO' at commit ${'$'}NOTES_SOURCE_COMMIT_SHA"
-                echo "Using known path: ${'$'}REL_PATH"
-
-                # Ensure we are on the target branch in the parent repo
-                git fetch origin "${'$'}PARENT_REPO_TARGET_BRANCH"
-                git checkout "${'$'}PARENT_REPO_TARGET_BRANCH"
-                git pull --rebase origin "${'$'}PARENT_REPO_TARGET_BRANCH"
-
-                # Clone notes repo at the exact commit (no checkout of files)
-                TEMP_NOTES_CLONE_DIR="${'$'}(mktemp -d)"
-                cleanup_temp_dir() { rm -rf "${'$'}TEMP_NOTES_CLONE_DIR"; }
-                trap cleanup_temp_dir EXIT
-
-                git clone --no-checkout "git@github.com:${'$'}{NOTES_SOURCE_GIT_REPO}.git" "${'$'}TEMP_NOTES_CLONE_DIR/notes"
-                git -C "${'$'}TEMP_NOTES_CLONE_DIR/notes" fetch --depth=1 origin "${'$'}NOTES_SOURCE_COMMIT_SHA":"${'$'}NOTES_SOURCE_COMMIT_SHA"
-                git -C "${'$'}TEMP_NOTES_CLONE_DIR/notes" checkout --force "${'$'}NOTES_SOURCE_COMMIT_SHA"
-
-                # ── Known-path extraction ──────────────────────────────────────────────────────
-                if ! git -C "${'$'}TEMP_NOTES_CLONE_DIR/notes" ls-tree -r --name-only "${'$'}NOTES_SOURCE_COMMIT_SHA" | grep -Fxq "${'$'}REL_PATH"; then
-                  echo "ERROR: Path '${'$'}REL_PATH' not found at commit ${'$'}NOTES_SOURCE_COMMIT_SHA in ${'$'}NOTES_SOURCE_GIT_REPO" >&2
-                  exit 1
-                fi
-
-                RELEASE_NOTES_FILENAME="${'$'}(basename "${'$'}REL_PATH")"
-                mkdir -p "${'$'}VENDORED_NOTES_DIR"
-                git -C "${'$'}TEMP_NOTES_CLONE_DIR/notes" show "${'$'}NOTES_SOURCE_COMMIT_SHA:${'$'}REL_PATH" > "${'$'}VENDORED_NOTES_DIR/${'$'}RELEASE_NOTES_FILENAME"
-                echo "Copied ${'$'}REL_PATH -> ${'$'}VENDORED_NOTES_DIR/${'$'}RELEASE_NOTES_FILENAME"
-
-                # Copy manifest only if it exists upstream
-                UPSTREAM_MANIFEST_PATH="${'$'}TEMP_NOTES_CLONE_DIR/notes/manifest.txt"
-                LOCAL_MANIFEST_PATH="${'$'}VENDORED_NOTES_DIR/manifest.txt"
-                if [ -f "${'$'}UPSTREAM_MANIFEST_PATH" ]; then
-                  cp -f "${'$'}UPSTREAM_MANIFEST_PATH" "${'$'}LOCAL_MANIFEST_PATH"
-                  sed -i.bak '/^release_notes_repo_commit=/d' "${'$'}LOCAL_MANIFEST_PATH" || true
-                  rm -f "${'$'}LOCAL_MANIFEST_PATH.bak"
-                  echo "release_notes_repo_commit=${'$'}NOTES_SOURCE_COMMIT_SHA" >> "${'$'}LOCAL_MANIFEST_PATH"
-                  echo "release_notes_source_path=${'$'}REL_PATH" >> "${'$'}LOCAL_MANIFEST_PATH"
-                fi
-
-                # Stage and push only if changes exist
-                git add "${'$'}VENDORED_NOTES_DIR/${'$'}RELEASE_NOTES_FILENAME" "${'$'}LOCAL_MANIFEST_PATH" 2>/dev/null || true
-                if git diff --cached --quiet; then
-                  echo "No changes to vendor directory. Nothing to push."
-                  exit 0
-                fi
-
-                : "${'$'}{GIT_USER_NAME:=TeamCity Bot}"
-                : "${'$'}{GIT_USER_EMAIL:=tc-bot@example.invalid}"
-                git config --local user.name  "${'$'}GIT_USER_NAME"
-                git config --local user.email "${'$'}GIT_USER_EMAIL"
-
-                SHORT_NOTES_COMMIT="${'$'}(git rev-parse --short "${'$'}NOTES_SOURCE_COMMIT_SHA")"
-                git commit -m "docs(notes): vendor ${'$'}{RELEASE_NOTES_FILENAME} @ ${'$'}SHORT_NOTES_COMMIT"
-                git pull --rebase origin "${'$'}PARENT_REPO_TARGET_BRANCH"
-                git push origin HEAD:"${'$'}PARENT_REPO_TARGET_BRANCH"
-
-                echo "Pushed vendored notes (${'$'}RELEASE_NOTES_FILENAME) to ${'$'}PARENT_REPO_TARGET_BRANCH"
-                """.trimIndent()
+            #!/usr/bin/env bash
+            set -euo pipefail
+            buildscripts/vendor-release-notes.sh
+        """.trimIndent()
+            env["GITHUB_NOTES_REPO"] = "%env.GITHUB_NOTES_REPO%"
+            env["VENDOR_DIR"]        = "%env.VENDOR_DIR%"
+            env["PR_BASE"]           = "%env.PR_BASE%"
+            env["REL_PATH"]          = "%env.REL_PATH%"          // e.g. docs/mysql-9.0-relnotes-en.pdf
+            env["NOTES_SHA"]         = "%env.NOTES_SHA%"         // provided by upstream job or manual
+            env["GIT_USER_NAME"]     = "%env.GIT_USER_NAME%"
+            env["GIT_USER_EMAIL"]    = "%env.GIT_USER_EMAIL%"
         }
     }
 
