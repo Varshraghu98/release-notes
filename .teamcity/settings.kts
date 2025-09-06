@@ -124,13 +124,14 @@ object VendorNotesDirectPush : BuildType({
             set -euo pipefail
             buildscripts/vendor-release-notes.sh
         """.trimIndent()
-            env["GITHUB_NOTES_REPO"] = "%env.GITHUB_NOTES_REPO%"
-            env["VENDOR_DIR"]        = "%env.VENDOR_DIR%"
-            env["PR_BASE"]           = "%env.PR_BASE%"
-            env["REL_PATH"]          = "%env.REL_PATH%"          // e.g. docs/mysql-9.0-relnotes-en.pdf
-            env["NOTES_SHA"]         = "%env.NOTES_SHA%"         // provided by upstream job or manual
-            env["GIT_USER_NAME"]     = "%env.GIT_USER_NAME%"
-            env["GIT_USER_EMAIL"]    = "%env.GIT_USER_EMAIL%"
+        }
+        params {
+            param("env.GITHUB_NOTES_REPO", "%env.GITHUB_NOTES_REPO%")
+            param("env.VENDOR_DIR",        "%env.VENDOR_DIR%")
+            param("env.PR_BASE",           "%env.PR_BASE%")
+            param("env.REL_PATH",          "%env.REL_PATH%")
+            param("env.GIT_USER_NAME",     "%env.GIT_USER_NAME%")
+            param("env.GIT_USER_EMAIL",    "%env.GIT_USER_EMAIL%")
         }
     }
 
