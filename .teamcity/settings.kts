@@ -124,8 +124,6 @@ object VendorNotesDirectPush : BuildType({
             set -euo pipefail
             buildscripts/vendor-release-notes.sh
         """.trimIndent()
-        }
-        params {
             param("env.GITHUB_NOTES_REPO", "%env.GITHUB_NOTES_REPO%")
             param("env.VENDOR_DIR",        "%env.VENDOR_DIR%")
             param("env.PR_BASE",           "%env.PR_BASE%")
