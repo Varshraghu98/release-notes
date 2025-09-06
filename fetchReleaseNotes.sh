@@ -6,7 +6,7 @@ set -euo
 MANIFEST_FILE="manifest.txt"
 # ============================================
 
-# curl with retries (portable)
+# curl with retries
 CURL_RETRY_OPTS="--fail --location --silent --show-error --retry 5 --retry-delay 3"
 if curl --help all 2>/dev/null | grep -q -- '--retry-connrefused'; then
   CURL_RETRY_OPTS="$CURL_RETRY_OPTS --retry-connrefused"
@@ -69,7 +69,7 @@ fi
 git commit -m "Update release notes from $SRC_URL at $FETCHED_AT (saved as $NOTES_FILE)"
 git push origin HEAD:main
 
-# Print the commit we pushed (for CI to capture if desired)
+# Print the commit pushed (for CI to capture)
 RELNOTES_SHA="$(git rev-parse HEAD)"
 echo "release_notes_repo_commit=$RELNOTES_SHA"
 echo "✅ Updated $NOTES_FILE and $MANIFEST_FILE and pushed $RELNOTES_SHA"
