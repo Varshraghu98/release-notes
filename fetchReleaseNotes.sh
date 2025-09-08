@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+git config --show-origin --get-regexp '^user\.'
+git config --local --unset-all user.name  || true
+git config --local --unset-all user.email || true
+
 #SRC_URL is the canonical marketing link to fetch the current release notes.
 #MANIFEST_FILE records the inputs + content hash so future builds can verify
 #exactly what was fetched (reproducibility & audit trail).
@@ -74,7 +78,7 @@ fi
 git commit -m "Update release notes from $SRC_URL at $FETCHED_AT (saved as $NOTES_FILE)"
 git push origin HEAD:main
 
-# Print the commit pushed (for CI to capture)
+# Print the commit pushed
 RELNOTES_SHA="$(git rev-parse HEAD)"
 echo "release_notes_repo_commit=$RELNOTES_SHA"
 echo "✅ Updated $NOTES_FILE and $MANIFEST_FILE and pushed $RELNOTES_SHA"

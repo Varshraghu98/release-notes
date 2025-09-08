@@ -72,8 +72,7 @@ object UpdateReleaseNotes : BuildType({
             name = "Run fetchReleaseNotes.sh (commit + push)"
             scriptContent = """
                 set -eu
-                git config --local user.name  "%env.GIT_USER_NAME%"
-                git config --local user.email "%env.GIT_USER_EMAIL%"
+
                 
                 chmod +x ./fetchReleaseNotes.sh
                 ./fetchReleaseNotes.sh
