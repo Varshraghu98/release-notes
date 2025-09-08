@@ -7,7 +7,7 @@ git config --local --unset-all user.email || true
 
 #SRC_URL is the canonical marketing link to fetch the current release notes.
 #MANIFEST_FILE records the inputs + content hash so future builds can verify
-#exactly what was fetched (reproducibility & audit trail).
+#exactly what was fetched
 : "${SRC_URL:=https://downloads.mysql.com/docs/mysql-9.0-relnotes-en.pdf}"
 MANIFEST_FILE="manifest.txt"
 
@@ -21,8 +21,9 @@ if curl --help all 2>/dev/null | grep -q -- '--retry-all-errors'; then
   CURL_RETRY_OPTS="$CURL_RETRY_OPTS --retry-all-errors"
 fi
 
-#Download into a unique temp directory to avoid polluting the repo and to
-#ensure repeated runs don't reuse stale files. Always cleaned up on exit.
+#Downloaded into a unique temp directory to avoid polluting the repo and to
+#ensure repeated runs don't reuse stale files.
+# Always cleaned up on exit.
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -40,8 +41,8 @@ if [ -z "${DOWNLOADED_PATH:-}" ] || [ ! -s "$DOWNLOADED_PATH" ]; then
 fi
 
 
-# - Keep the server-provided filename to avoid accidental renames that would
-#   break reproducibility or diffs between runs.
+# Keeping the server-provided filename to avoid accidental renames that would
+# break reproducibility or diffs between runs.
 NOTES_FILE="$(basename "$DOWNLOADED_PATH")"
 mv -f "$DOWNLOADED_PATH" "./$NOTES_FILE"
 
@@ -55,8 +56,8 @@ FETCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # MANIFEST
 # - Records:
-#   * source_url     → what we fetched
-#   * fetched_at_utc → when we fetched it (normalized)
+#   * source_url     → what was fetched
+#   * fetched_at_utc → when was it fetched
 #   * release_notes_sha256 → exact content identity
 # - Downstream steps can diff manifests or verify hash equality across commits.
 {
@@ -66,19 +67,19 @@ FETCHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$MANIFEST_FILE"
 
 # GIT PUBLISH
-# Stage notes + manifest. Commit only on change → idempotent reruns
-# (no noisy commits if the content hasn’t changed).
+# Stage notes + manifest. Commit only on change.
+# (no noisy commits if the content has not changed).
 git add "$NOTES_FILE" "$MANIFEST_FILE"
 if git diff --cached --quiet; then
   echo "No changes to commit."
   exit 0
 fi
 
-# Commit message carries URL + timestamp for traceability in history.
+# Commit messages carries URL + timestamp for traceability in history.
 git commit -m "Update release notes from $SRC_URL at $FETCHED_AT (saved as $NOTES_FILE)"
 git push origin HEAD:main
 
-# Print the commit pushed
+# Prints the commit pushed
 RELNOTES_SHA="$(git rev-parse HEAD)"
 echo "release_notes_repo_commit=$RELNOTES_SHA"
 echo "✅ Updated $NOTES_FILE and $MANIFEST_FILE and pushed $RELNOTES_SHA"

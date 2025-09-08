@@ -72,8 +72,6 @@ object UpdateReleaseNotes : BuildType({
             name = "Run fetchReleaseNotes.sh (commit + push)"
             scriptContent = """
                 set -eu
-
-                
                 chmod +x ./fetchReleaseNotes.sh
                 ./fetchReleaseNotes.sh
                 
@@ -111,10 +109,8 @@ object VendorNotesDirectPush : BuildType({
             """.trimIndent()
             param("env.VENDOR_DIR", "%env.VENDOR_DIR%")
             param("env.REL_PATH", "%env.REL_PATH%")
-            param("env.GIT_USER_EMAIL", "%env.GIT_USER_EMAIL%")
             param("env.GITHUB_NOTES_REPO", "%env.GITHUB_NOTES_REPO%")
             param("env.PR_BASE", "%env.PR_BASE%")
-            param("env.GIT_USER_NAME", "%env.GIT_USER_NAME%")
         }
     }
 
